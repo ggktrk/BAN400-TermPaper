@@ -1,0 +1,436 @@
+---
+title: "Stock information"
+output: html_document
+runtime: shiny
+---
+This is a Shiny app that gives information about stocks.
+The data consists of 33 stocks divided between 7 sectors in addition to the price of oil and the currency exchange rate from Euro, USD and GBP to NOK.
+The data is fetched from Yahoo and consists of prices for the past one year, updated daily.
+
+```{r Library, include=FALSE}
+library(readxl)
+library(shiny)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(magrittr)
+library(broom)
+library(PerformanceAnalytics)
+library(zoo)
+library(gridExtra)
+library(forecast)
+```
+
+
+ 
+```{r Data, include=FALSE}
+####Fetching the data####
+
+#Symbols for the stocks
+stocknames <- c("MOWI.OL", "AUSS.OL","SALM.OL","BAKKA.OL","LSG.OL"
+                ,"EQNR.OL","AKERBP.OL","SUBC.OL","TGS.OL","FRO.OL"
+                ,"DNB.OL","GJF.OL","AKER.OL","STB.OL","SRBANK.OL"
+                ,"TEL.OL","ADE.OL","SCHB.OL","SCHA.OL","KAHOOT-ME.OL"
+                ,"YAR.OL","NHY.OL","ELK.OL","BRG.OL"
+                ,"TOM.OL","KOG.OL","NEL.OL","AFG.OL","VEI.OL"
+                ,"TIETOO.OL","NOD.OL","ATEA.OL","CRAYON.OL", "CL=F","EURNOK=X" ,"USDNOK=X","GBPNOK=X")
+
+#The URL is based on unix time, so we convert the current system time to unix time
+unixtime = as.numeric(as.POSIXct(Sys.Date(),Sys.time())) - 86400
+unixtime1yearago = as.numeric(as.POSIXct(Sys.Date(),Sys.time())) - 31536000
+
+
+stocksurl <- c()
+stocklist <- list()
+
+for (stocks in stocknames) {
+  
+  stocksurl[stocks] <- c(paste0("https://query1.finance.yahoo.com/v7/finance/download/", stocks, "?period1=", unixtime1yearago, "&period2=", unixtime, "&interval=1d&events=history&includeAdjustedClose=true"))
+  
+}
+
+for (stocks in 1:length(stocksurl)){
+  
+  stocklist[[stocks]] <- read.csv(stocksurl[stocks])
+  assign(stocknames[stocks], as.data.frame(stocklist[[stocks]]))
+  
+}
+
+
+#Some data wrangling to create a data frame containing all stock prices (adjusted closing price) and a data frame containing all stock returns. Theres two versions of both:
+#an xts version where they are in xts format and normal data frame formats. (allstocks, allstocksxts, allstockreturns and allstockreturns_xts)
+allstocks = data.frame(MOWI.OL$Adj.Close, AUSS.OL$Adj.Close, SALM.OL$Adj.Close,BAKKA.OL$Adj.Close,LSG.OL$Adj.Close
+                       ,EQNR.OL$Adj.Close,AKERBP.OL$Adj.Close ,SUBC.OL$Adj.Close,TGS.OL$Adj.Close,FRO.OL$Adj.Close
+                       ,DNB.OL$Adj.Close,GJF.OL$Adj.Close,AKER.OL$Adj.Close,STB.OL$Adj.Close,SRBANK.OL$Adj.Close
+                       ,TEL.OL$Adj.Close,ADE.OL$Adj.Close,SCHB.OL$Adj.Close,SCHA.OL$Adj.Close, `KAHOOT-ME.OL`$Adj.Close
+                       ,YAR.OL$Adj.Close,NHY.OL$Adj.Close,ELK.OL$Adj.Close,BRG.OL$Adj.Close
+                       ,TOM.OL$Adj.Close,KOG.OL$Adj.Close,NEL.OL$Adj.Close,AFG.OL$Adj.Close,VEI.OL$Adj.Close
+                       ,TIETOO.OL$Adj.Close,NOD.OL$Adj.Close,ATEA.OL$Adj.Close,CRAYON.OL$Adj.Close)
+
+
+#Convert the prices to numeric 
+allstocks = mutate_all(allstocks, function(x) as.numeric(as.character(x))) #Convert the prices to numeric 
+dates = as.Date.character(MOWI.OL$Date)   #Converts the dates to Date format
+allstocks = cbind(dates, allstocks)       #merges the prices and dates in the right format
+
+allstocksxts = xts(x = allstocks[, -1], order.by = as.Date(allstocks$dates))  #dataset in xts format
+allstocks = as.data.frame(allstocksxts)
+
+#Grouping the data and creating different dataframes
+
+#Currencies
+allcurrencies = data.frame(as.Date.character(`EURNOK=X`$Date),`EURNOK=X`$Adj.Close, `USDNOK=X`$Adj.Close, `GBPNOK=X`$Adj.Close)
+allcurrenciesxts = xts(x = allcurrencies[, -1], order.by = as.Date(allcurrencies$as.Date.character..EURNOK.X..Date.))
+
+
+#Oilprice
+oilprice = data.frame(as.Date.character(`CL=F`$Date),`CL=F`$Adj.Close)
+oilxts = xts(x = oilprice[, -1], order.by = as.Date(oilprice$as.Date.character..CL.F..Date.))
+
+
+
+#Merging stocks, currencies and oilprice
+allstocksxts =  na.omit(merge(oilxts, allcurrenciesxts, allstocksxts))
+allstocks = as.data.frame(allstocksxts)
+
+#changing the names of the colums to the Companies names.
+colnames(allstocks) = c("Oilprice", "Euro_to_NOK","USD_to_NOK", "GBP_to_NOK", "Mowi", "Austevoll_Seafood","Salmar","Bakkafrost","Lerøy_Seafood"
+                ,"Equinor","Aker_BP","Subsea","TGS_NOPEC","Frontline"
+                ,"DNB","Gjensidige_Forsikring","AKER","Storebrand","Sparebank1"
+                ,"Telenor","Adevinta","Schibsted_SCHB","Schibsted_SCHA","Kahoot"
+                ,"Yara_International","Norsk_Hydro","Elkem","Borregaard"
+                ,"Tomra_Systems","Kongsberg_Gruppen","Nel","AF_Gruppen","Veidekke"
+                ,"TietioEVRY","Nordic_Semiconduct","Atea","Crayon_Group")
+
+
+#Makes a dataframe with all prices converted to daily return
+allstockreturns_xts = Return.calculate(allstocksxts) 
+allstockreturns = na.omit(as.data.frame(allstockreturns_xts))
+colnames(allstockreturns) = colnames(allstocks)
+
+
+# assigning each stock to its belonging sectors
+
+seafood <- allstocks %>% 
+  select(Mowi, Austevoll_Seafood,Salmar,Bakkafrost,Lerøy_Seafood)
+seafoodreturns <- allstockreturns %>% 
+  select(Mowi, Austevoll_Seafood,Salmar,Bakkafrost,Lerøy_Seafood)
+
+energy <- allstocks %>% 
+  select(Equinor,Aker_BP,Subsea,TGS_NOPEC,Frontline)
+energyreturns <- allstockreturns %>% 
+  select(Equinor,Aker_BP,Subsea,TGS_NOPEC,Frontline)
+
+finance <- allstocks %>% 
+  select(DNB,Gjensidige_Forsikring,AKER,Storebrand,Sparebank1)
+financereturns <- allstockreturns %>% 
+  select(DNB,Gjensidige_Forsikring,AKER,Storebrand,Sparebank1)
+
+communication <- allstocks %>% 
+  select(Telenor,Adevinta,Schibsted_SCHB,Schibsted_SCHA,Kahoot)
+communicationreturns <- allstockreturns %>% 
+  select(Telenor,Adevinta,Schibsted_SCHB,Schibsted_SCHA,Kahoot)
+
+materials <- allstocks %>% 
+  select(Yara_International,Norsk_Hydro,Elkem,Borregaard)
+materialreturns <- allstockreturns %>% 
+  select(Yara_International,Norsk_Hydro,Elkem,Borregaard)
+
+industrial <- allstocks %>% 
+  select(Tomra_Systems,Kongsberg_Gruppen,Nel,AF_Gruppen,Veidekke)
+industrialreturns <- allstockreturns %>% 
+  select(Tomra_Systems,Kongsberg_Gruppen,Nel,AF_Gruppen,Veidekke)
+
+it <- allstocks %>% 
+  select(TietioEVRY,Nordic_Semiconduct,Atea,Crayon_Group)
+itreturns <- allstockreturns %>% 
+  select(TietioEVRY,Nordic_Semiconduct,Atea,Crayon_Group)
+
+Currency_and_oil <- allstocks %>% 
+  select(Oilprice, Euro_to_NOK,USD_to_NOK,GBP_to_NOK)
+Currency_and_oilreturns <- allstockreturns %>% 
+  select(Mowi, Austevoll_Seafood,Salmar,Bakkafrost,Lerøy_Seafood)
+
+# combining each sectors dataframe under one list to use later on the shiny app
+allstockreturnslist <- list(seafoodreturns,energyreturns, financereturns,
+                            communicationreturns, materialreturns, industrialreturns,
+                            itreturns, Currency_and_oil)
+
+names(allstockreturnslist) <- c("Seafood", "Energy","Finance", "Communication", "Materials", "Industry", "IT", "Currency_and_oil")
+
+colnames(allstocks) = c("Oilprice", "Euro_to_NOK","USD_to_NOK", "GBP_to_NOK", "Mowi", "Austevoll_Seafood","Salmar","Bakkafrost","Lerøy_Seafood"
+                ,"Equinor","Aker_BP","Subsea","TGS NOPEC","Frontline"
+                ,"DNB","Gjensidige_Forsikring","AKER","Storebrand","Sparebank1"
+                ,"Telenor","Adevinta","Schibsted_SCHB","Schibsted_SCHA","Kahoot"
+                ,"Yara_International","Norsk_Hydro","Elkem","Borregaard"
+                ,"Tomra_Systems","Kongsberg_Gruppen","Nel","AF_Gruppen","Veidekke"
+                ,"TietioEVRY","Nordic_Semiconduct","Atea","Crayon_Group")
+
+
+#dataframes of decomposed stock prices
+alldecomp = lapply(colnames(allstocks), function(x) {mstl(allstocks[, x], lambda = "auto")}) 
+alldecomp = as.data.frame(alldecomp)
+
+stockprice =  alldecomp[seq(1, length(alldecomp), 3)]
+trends =  alldecomp[seq(2, length(alldecomp), 3)]
+remain = alldecomp[seq(3, length(alldecomp), 3)]
+
+colnames(stockprice) = colnames(allstocks)
+colnames(trends) = colnames(allstocks)
+colnames(remain) = colnames(allstocks)
+
+startdate = as.Date(index(allstocksxts[1]))
+enddate = as.Date(index(allstocksxts[length(index(allstocksxts))]))
+dates = index(allstocksxts)
+allstocks = cbind(allstocks, dates)
+```
+
+
+
+```{r Time series, echo=FALSE}
+#ShinyApp consists of two main parts: ui and server
+shinyApp(
+  
+  #in the ui part we design the page, and says what should be on it
+  ui <- fluidPage(
+    titlePanel("Model 1: Trend index"),
+    
+    sidebarLayout(
+      
+      sidebarPanel(
+        
+        selectInput("sector1", "Pick a sector:",
+                    choices = names(allstockreturnslist)),
+        selectInput("stock1", "Pick a stock:",
+                    choices = colnames(allstockreturnslist[["Seafood"]])),
+        selectInput("sector2", "Pick a sector:",
+                    choices = names(allstockreturnslist)),
+        selectInput("stock2", "Pick a stock:",
+                    choices = colnames(allstockreturnslist[["Seafood"]])),
+        
+        # Select date range to be plotted
+        dateInput("start_date", strong("Start date"), value = startdate,
+                  min = startdate, max = enddate, weekstart = 1),
+        
+        dateInput("end_date", strong("End date"), value = enddate,
+                  min = startdate, max = enddate, weekstart = 1),
+      ),
+      
+      mainPanel(
+        plotOutput("lineplot", click = "plot_click"), textOutput("cortext"),verbatimTextOutput("info"))
+      
+    )
+  ),
+  
+  #in the server part we do the underlying coding for the different parts
+  server <- function(input, output, session) {
+    
+    observe({
+      
+      updateSelectInput(session, "stock1", choices = colnames(allstockreturnslist[[input$sector1]]))
+      updateSelectInput(session, "stock2", choices = colnames(allstockreturnslist[[input$sector2]]))
+      
+    })
+    
+    
+    #subset data
+    data_select <- reactive({
+      req(input$start_date, input$end_date)
+      validate(need(input$start_date < input$end_date, "Error: Start date must be earlier than end date."))
+      allstocks %>% 
+        filter(dates >= input$start_date & dates <= input$end_date)
+    })
+    
+    #creates the plot
+    output$lineplot <- renderPlot({
+      ggplot(data_select(), aes_string(x = as.Date(data_select()$dates))) + 
+        geom_line(aes_string(y = input$stock1, color=shQuote("one"))) +
+        geom_line(aes_string(y = input$stock2, color=shQuote("two"))) +
+        scale_color_manual(labels = c(input$stock1, input$stock2), values = c(one="blue", two="red")) +
+        xlab("Date") +
+        ylab("Closing price") +
+        guides(color=guide_legend("Stocks:"))
+    })
+    
+    output$info <- renderText({
+      # The "Error: do not know how to convert 'x' to class “Date”" message disappears once you click on the any point on the graph. 
+    
+      paste0("Date: ", as.Date(input$plot_click$x), "\nClosing Price: ", input$plot_click$y)
+      
+    })
+    
+  },
+  
+  #Length of section
+  options = list(height = 590)
+)
+```
+
+
+
+
+```{r Plot with correlation, echo=FALSE}
+
+#ShinyApp consists of two main parts: ui and server
+shinyApp(
+  
+  #in the ui part we design the page, and says what should be on it
+  ui = fluidPage(
+    titlePanel("Model 2: Compare two stocks"),
+    
+      sidebarPanel(
+        selectInput("sector1", "Pick a sector:",
+                    choices = names(allstockreturnslist)),
+        selectInput("stock1", "Pick stock 1:",
+                    choices = colnames(allstockreturnslist[["Seafood"]])),
+        selectInput("sector2", "Pick a sector:",
+                    choices = names(allstockreturnslist)),
+        selectInput("stock2", "Pick stock 2:",
+                    choices = colnames(allstockreturnslist[["Seafood"]])),
+      ),
+      
+      mainPanel(
+        plotOutput("scatplot"), textOutput("cortext"),
+        verbatimTextOutput(outputId = "corrsummary"),
+        textOutput("sd1text"),
+        verbatimTextOutput(outputId = "std1"),
+        textOutput("sd2text"),
+        verbatimTextOutput(outputId = "std2"),
+        textOutput("covtext"),
+        verbatimTextOutput(outputId = "covsummary"),
+        textOutput("mintext"),
+        verbatimTextOutput(outputId = "minportf"),
+        textOutput("rtext1"),
+        verbatimTextOutput(outputId = "return1"),
+        textOutput("rtext2"),
+        verbatimTextOutput(outputId = "return2"),)
+    
+  ),
+  
+  #in the server part we do the underlying coding for the different parts
+  server = function(input, output, session) {
+    
+    observe({
+      
+      updateSelectInput(session, "stock1", choices = colnames(allstockreturnslist[[input$sector1]]))
+      updateSelectInput(session, "stock2", choices = colnames(allstockreturnslist[[input$sector2]]))
+      
+    })
+    
+    #creates an interactive data frame
+    data_select = reactive({(allstockreturns)}) 
+    
+    #creates the plot
+    output$scatplot = renderPlot({
+      ggplot(data_select(), 
+             aes_string(x = input$stock1, y = input$stock2)) + 
+        geom_point() +
+        xlab(input$stock1) +
+        ylab(input$stock2) + ggtitle("Scatterplot with the daily return of the selected stocks")
+    })
+    
+    #Calculates the correlation
+    correlation = reactive({cor(allstockreturns[,input$stock1], allstockreturns[,input$stock2])}) 
+    
+    #creates an output for the correlation
+    output$cortext = renderText("Correlation between stock 1 and stock 2:")
+    output$corrsummary = renderPrint({correlation()})
+    
+    #Standard deviation stock 1
+    sd1 = reactive({sd(allstockreturns[,input$stock1])}) 
+    output$sd1text = renderText("Standard deviation of stock 1:")
+    output$std1 = renderPrint({sd1()})
+    
+    #Standard deviation stock 2
+    sd2 = reactive({sd(allstockreturns[,input$stock2])}) 
+    output$sd2text = renderText("Standard deviation of stock 2:")
+    output$std2 = renderPrint({sd2()})
+    
+    #Calculates the covariance
+    covar = reactive({cov(allstockreturns[,input$stock1], allstockreturns[,input$stock2])}) 
+    output$covtext = renderText("Covariance between stock 1 and stock 2:")
+    output$covsummary = renderPrint({covar()})
+    
+    #Total return in period stock1
+    ret1 = reactive({(allstocks[length(allstocks),input$stock1] - allstocks[1,input$stock1])/allstocks[1,input$stock1]}) 
+    output$rtext1 = renderText("Total return of stock 1 in the past year:")
+    output$return1 = renderPrint({ret1()})
+    
+    #Total return in period stock2
+    ret2 = reactive({(allstocks[length(allstocks),input$stock2] - allstocks[1,input$stock2])/allstocks[1,input$stock2]}) 
+    output$rtext2 = renderText("Total return of stock 2 in the past year:")
+    output$return2 = renderPrint({ret2()})
+
+    #Least variance portfolio
+    minport = reactive({((var(allstockreturns[,input$stock2]))-cov(allstockreturns[,input$stock1], allstockreturns[,input$stock2])) / ((var(allstockreturns[,input$stock1]))+ (var(allstockreturns[,input$stock2])) - (2*cov(allstockreturns[,input$stock1], allstockreturns[,input$stock2])))})
+    
+    output$mintext = renderText("Proportion of investment in stock 1 in order to minimize the variance in a portfolio consisting of stock 1 and stock 2:")
+    output$minportf = renderPrint({minport()})
+        
+    
+  },
+  
+  #Length of section
+  options = list(height = 1000)
+)
+
+```
+
+
+```{r decomposing, echo=FALSE}
+
+#ShinyApp consists of two main parts: ui and server
+shinyApp(
+  
+  #in the ui part we design the page, and says what should be on it
+  ui = fluidPage(
+    titlePanel("Model 3: Decompose a stock into trend and remainder"),
+    
+      sidebarPanel(
+        selectInput("sector3", "Pick a sector:",
+                    choices = names(allstockreturnslist)),
+        selectInput("stock3", "Pick a stock:",
+                    choices = colnames(allstocks), selected = "Mowi"),
+      ),
+      
+      mainPanel(
+        plotOutput("decomp"))
+    
+  ),
+  
+  #in the server part we do the underlying coding for the different parts
+  server = function(input, output, session) {
+    
+    observe({
+      
+      updateSelectInput(session, "stock3", choices = colnames(allstockreturnslist[[input$sector3]]))
+      
+    })
+    
+    #creates an interactive data frame
+    data_select2 = reactive({(stockprice)}) 
+    data_select3 = reactive({(trends)}) 
+    data_select4 = reactive({(remain)}) 
+    
+    #plot: 3 ggplots inside grid.arrange
+    output$decomp = renderPlot({grid.arrange(ggplot(data_select2(), 
+             aes_string(x = index(allstocksxts), y = input$stock3)) + 
+        geom_line() +
+        xlab("Time") +
+        ylab("Stock price"), ggplot(data_select3(), 
+             aes_string(x = index(allstocksxts), y = input$stock3)) + 
+        geom_line() +
+        xlab("Time") +
+        ylab("Trend"), ggplot(data_select4(), 
+             aes_string(x = index(allstocksxts), y = input$stock3)) + 
+        geom_line() +
+        xlab("Time") +
+        ylab("Remainder"))
+    })
+  },
+  
+  #Length of section
+  options = list(height = 800)
+)
+
+```
