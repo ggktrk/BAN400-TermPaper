@@ -250,7 +250,6 @@ shinyApp(
     })
     
     output$info <- renderText({
-      # The "Error: do not know how to convert 'x' to class “Date”" message disappears once you click on the any point on the graph. 
     
       paste0("Date: ", as.Date(input$plot_click$x), "\nClosing Price: ", input$plot_click$y)
       
